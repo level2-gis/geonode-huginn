@@ -11,6 +11,7 @@ RUN apt-get update -y && apt-get install -y --no-install-recommends \
     gnupg2 \
     locales \
     netcat-openbsd \
+    libmemcached-dev \
     && sed -i -e 's/# C.UTF-8 UTF-8/C.UTF-8 UTF-8/' /etc/locale.gen \
     && locale-gen \
     && apt-get autoremove --purge -y \
