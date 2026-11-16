@@ -164,7 +164,30 @@ The JSON file must be stored outside the Git repository and protected appropriat
 
 Do not commit the JSON file or share it through an unsecured channel.
 
-### 4.4 Review the generated configuration
+### 4.4 Configure SMTP email
+
+Outgoing email is required for GeoNode features such as user invitations and account notifications.
+
+The `.env.sample` enables SMTP by default. After generating the production `.env` file, edit it and provide the SMTP settings for the email provider:
+
+| Variable | Description |
+|---|---|
+| `EMAIL_ENABLE` | Must be `True` |
+| `DJANGO_EMAIL_BACKEND` | SMTP email backend |
+| `DJANGO_EMAIL_HOST` | SMTP server hostname |
+| `DJANGO_EMAIL_PORT` | SMTP server port |
+| `DJANGO_EMAIL_HOST_USER` | SMTP authentication username |
+| `DJANGO_EMAIL_HOST_PASSWORD` | SMTP authentication password |
+| `DJANGO_EMAIL_USE_TLS` | Enable STARTTLS if required by the provider |
+| `DJANGO_EMAIL_USE_SSL` | Enable SSL if required by the provider |
+
+The default configuration uses port `587` with TLS enabled. Adjust these values according to the email provider's requirements.
+
+Do not commit SMTP credentials to Git or include them in documentation or support logs.
+
+Before using email-dependent features, verify that the SMTP configuration is correct and outgoing email works.
+
+### 4.5 Review the generated configuration
 
 Before starting the deployment, verify the following:
 
@@ -176,6 +199,7 @@ Before starting the deployment, verify the following:
 - Correct Docker image versions.
 - Correct Redis and Celery configuration.
 - Correct PostgreSQL connection settings.
+- Valid SMTP configuration.
 - Public and social registration disabled, account approval required, and automatic contributor assignment disabled.
 
 Do not publish the contents of `.env` in logs, issue trackers or documentation.
