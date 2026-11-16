@@ -176,6 +176,7 @@ Before starting the deployment, verify the following:
 - Correct Docker image versions.
 - Correct Redis and Celery configuration.
 - Correct PostgreSQL connection settings.
+- Public and social registration disabled, account approval required, and automatic contributor assignment disabled (see section 10.1).
 
 Do not publish the contents of `.env` in logs, issue trackers or documentation.
 
@@ -326,6 +327,171 @@ Recommended security practices:
 - Restrict database access to the internal Docker network.
 - Maintain regular backups of persistent application data.
 
+### 10.1 Disable public registration on existing deployments
+
+The project defaults to invitation-based internal registration. Public local and
+social signup are closed, invited accounts require administrator approval, and
+new accounts do not automatically become contributors. Existing users can still
+sign in. Publicly readable resources remain publicly readable; these controls do
+not make the site private.
+
+Before deploying, edit the existing production `.env` and add or replace these
+entries (do not regenerate `.env` or rotate unrelated credentials):
+
+```dotenv
+ACCOUNT_OPEN_SIGNUP=False
+ACCOUNT_OPEN_SOCIALSIGNUP=False
+ACCOUNT_APPROVAL_REQUIRED=True
+AUTO_ASSIGN_REGISTERED_MEMBERS_TO_CONTRIBUTORS=False
+```
+
+Keep the capitalization shown. Explicit environment values override the project
+defaults, so remove any conflicting duplicate entries. The sample environment
+includes these values for new installations.
+
+For immediate containment with the currently installed GeoNode version, apply
+the environment change first:
+
+```bash
+docker compose config --quiet
+docker compose up -d --no-deps --force-recreate django celery
+```
+
+Restarting containers alone does not reload their environment. The environment
+change closes ordinary local and social signup while retaining GeoNode's
+verified invitation-session signup. No custom signup adapter is needed.
+
+After updating the checkout to include this fix, build and recreate both
+application services during a maintenance window:
+
+```bash
+docker compose build django
+docker compose up -d --no-deps --force-recreate django celery
+docker compose ps
+docker compose exec -T django python manage.py shell <<'PY'
+from django.conf import settings
+from django.test import RequestFactory
+from allauth.account.adapter import get_adapter
+from allauth.socialaccount.adapter import get_adapter as get_social_adapter
+
+expected = {
+    "ACCOUNT_OPEN_SIGNUP": False,
+    "ACCOUNT_OPEN_SOCIALSIGNUP": False,
+    "ACCOUNT_APPROVAL_REQUIRED": True,
+    "AUTO_ASSIGN_REGISTERED_MEMBERS_TO_CONTRIBUTORS": False,
+}
+for name, value in expected.items():
+    actual = getattr(settings, name)
+    print(f"{name}={actual}")
+    assert actual is value, f"Unexpected setting: {name}"
+assert settings.ACCOUNT_ADAPTER == "geonode.people.adapters.LocalAccountAdapter"
+request = RequestFactory().get("/account/signup/")
+request.session = {}
+assert not get_adapter(request).is_open_for_signup(request)
+request.session = {"account_verified_email": "invited@example.com"}
+assert get_adapter(request).is_open_for_signup(request)
+assert not get_social_adapter(request).is_open_for_signup(request, None)
+print("Public/social signup closed; verified invitation signup allowed.")
+PY
+```
+
+Stop and investigate any failed assertion or unhealthy service. Do not print the
+complete settings or environment, which contain secrets.
+
+In a private browser window, visit `/account/signup/` and confirm that it shows
+the internal-account instructions rather than a registration form. Confirm that
+a direct signup POST cannot create an account, and that an existing legitimate
+user can still sign in. If social login is configured, verify that an unprovisioned
+identity cannot create an account while an existing linked identity can sign in.
+Send a real test invitation and confirm that its link opens registration, the
+resulting account remains inactive until approval, and it cannot upload without
+an explicit contributor grant.
+Do not treat an HTTP 200 on the closed-signup information page as a failure.
+
+### 10.2 Register internal users
+
+Internal users must request an invitation from their organization's GeoNode
+administrator through an established internal channel. Do not temporarily reopen
+public signup. The closed-registration page explains this process to visitors.
+
+An authorized administrator should:
+
+1. Verify the person's identity and required access through that internal channel.
+2. With outgoing email configured and tested, sign in and use GeoNode's invitation
+   form to send an invitation to the verified organizational email address. The
+   form URL can be obtained with:
+
+   ```bash
+   docker compose exec django python manage.py shell -c \
+     "from django.urls import reverse; print(reverse('geonode.invitations:geonode-send-invite'))"
+   ```
+
+3. Have the user open the emailed link and complete registration in the same
+   browser session. They choose their own password; administrators should not
+   request it. With account approval enabled, the new account remains inactive.
+   In `/admin/`, review the GeoNode people/profile record and activate it only
+   after verifying identity and required access. Keep staff and superuser status
+   disabled for ordinary users.
+4. Grant membership of the existing `contributors` group only to users who need
+   to upload or create resources. Grant access to individual resources/groups as
+   required; do not make internal resources public just to enable collaboration.
+5. Tell the user when approval is complete and they can sign in. If the invitation
+   fails, check email delivery and invitation validity rather than reopening
+   public signup.
+6. Verify login and intended permissions with the user, including that an ordinary
+   non-contributor cannot upload datasets.
+
+GeoNode's invitation form requires login, not administrator status. Account
+approval is therefore the administrator-controlled gate: do not activate accounts
+merely because they arrived through an invitation. Review existing pending
+invitations in `/admin/` and revoke unwanted ones, including those issued by
+unwanted users. Previously issued valid invitations can still reach signup.
+Closing social signup does not disable login for already-linked social accounts;
+linking/provisioning internal identities must remain administrator-controlled.
+
+### 10.3 Contain and clean up unwanted accounts and resources
+
+Registration settings are not retroactive: existing unwanted accounts remain
+active, existing contributor memberships remain, and uploaded data is not removed.
+Do not bulk-delete users based only on their email domain or creation date.
+
+1. Apply section 10.1 first. In `/admin/`, identify suspicious accounts using
+   usernames, join dates, login history and resource ownership. Confirm a list of
+   account IDs and resource IDs with the responsible data owner. Preserve needed
+   access logs and evidence securely.
+2. Deactivate confirmed unwanted accounts promptly and remove their contributor,
+   privileged-group, direct-permission and staff/superuser grants as applicable.
+   Review/revoke their API/OAuth tokens, connected applications and active access
+   through the relevant administration interfaces. Deactivation alone must not be
+   assumed to invalidate every already-issued token or GeoServer access path.
+   Verify that their login and previously issued API access no longer work.
+3. Before deleting anything, make a consistent, restorable backup of both GeoNode
+   databases, GeoServer configuration/data, uploaded files and other persistent
+   application data listed in section 5. Include the deployment configuration in
+   secure storage. Coordinate writes/workers during backup; a copy of a running
+   PostgreSQL data directory is not a valid database backup. Verify restore in an
+   isolated environment.
+4. Inventory each unwanted user's datasets, documents, maps and other resources.
+   Check dependencies and sharing. Reassign legitimate resources to a trusted
+   owner first. Restrict confirmed unwanted public resources while reviewing them,
+   checking GeoServer services as well as GeoNode visibility.
+5. As an administrator, delete only explicitly approved unwanted resources through
+   GeoNode's resource deletion workflow, with Celery running. Review dependent maps
+   before confirming deletion. Monitor Django, Celery and GeoServer logs; verify
+   that the catalog entry, associated GeoServer layers/stores and underlying data
+   are cleaned up as appropriate. Do not delete database rows, storage files or
+   GeoServer stores directly as a shortcut.
+6. Keep unwanted accounts inactive until resource ownership and dependencies are
+   resolved. Delete accounts only after reviewing Django's deletion confirmation
+   and cascade list. Retaining an inactive account may be preferable for audit
+   purposes. Never delete the GeoNode `AnonymousUser`, service accounts or trusted
+   administrators as part of this cleanup.
+7. Recheck anonymous access, legitimate user login, authorized uploads and existing
+   maps. Record the approved deletions and any failed cleanup tasks for follow-up.
+
+This procedure requires production administrator access and an approved deletion
+list. Deploying this repository does not perform any production deletion.
+
 ## 11. Version management
 
 The project repository and GeoNode core have separate versioning:
@@ -356,5 +522,8 @@ The Docker image versions are controlled through `.env`. Review these values bef
 - [ ] Container health checks passed.
 - [ ] Public domain and HTTPS verified.
 - [ ] GeoNode login verified.
+- [ ] Public/social signup closed; invitation signup and approval verified.
+- [ ] Internal invitation process and contributor grants verified.
+- [ ] Existing unwanted accounts contained and approved resources cleaned up.
 - [ ] GeoServer integration verified.
 - [ ] Backup and restore procedures established.

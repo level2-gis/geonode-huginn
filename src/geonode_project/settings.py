@@ -19,6 +19,7 @@
 #########################################################################
 
 # Django settings for the GeoNode project.
+import ast
 import os
 
 # Load more settings from a file called local_settings.py if it exists
@@ -28,6 +29,13 @@ try:
 except ImportError:
     from geonode.settings import *
 
+# Keep existing deployments closed even when their .env predates these settings.
+ACCOUNT_OPEN_SIGNUP = ast.literal_eval(os.getenv("ACCOUNT_OPEN_SIGNUP", "False"))
+ACCOUNT_OPEN_SOCIALSIGNUP = ast.literal_eval(os.getenv("ACCOUNT_OPEN_SOCIALSIGNUP", "False"))
+ACCOUNT_APPROVAL_REQUIRED = ast.literal_eval(os.getenv("ACCOUNT_APPROVAL_REQUIRED", "True"))
+AUTO_ASSIGN_REGISTERED_MEMBERS_TO_CONTRIBUTORS = ast.literal_eval(
+    os.getenv("AUTO_ASSIGN_REGISTERED_MEMBERS_TO_CONTRIBUTORS", "False")
+)
 #
 # General Django development settings
 #
